@@ -113,14 +113,17 @@
 
             <receiver
                 android:name="de.appplant.cordova.plugin.localnotification.TriggerReceiver"
+		android:enabled="true"
                 android:exported="false" />
 
             <receiver
                 android:name="de.appplant.cordova.plugin.localnotification.ClearReceiver"
+		android:enabled="true"
                 android:exported="false" />
 
             <service
                 android:name="de.appplant.cordova.plugin.localnotification.ClickReceiver"
+		android:enabled="true"
                 android:exported="false" />
 
             <receiver
