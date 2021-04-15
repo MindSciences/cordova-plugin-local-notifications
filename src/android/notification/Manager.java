@@ -31,8 +31,6 @@ import android.content.SharedPreferences;
 import android.service.notification.StatusBarNotification;
 import androidx.core.app.NotificationManagerCompat;
 
-import com.claritasmindsciences.EatRightNowCommercial.R;
-
 import org.json.JSONException;
 import org.json.JSONObject;
 
