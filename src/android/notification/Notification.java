@@ -34,8 +34,10 @@ import android.service.notification.StatusBarNotification;
 import androidx.core.app.NotificationCompat;
 import androidx.collection.ArraySet;
 import androidx.core.util.Pair;
+import androidx.work.Constraints;
 import androidx.work.Data;
 import androidx.work.OneTimeWorkRequest;
+import androidx.work.Operation;
 import androidx.work.WorkManager;
 
 import android.util.Log;
@@ -52,7 +54,6 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 import de.appplant.cordova.plugin.notification.action.Action;
-import de.appplant.cordova.plugin.notification.util.TimeUtil;
 
 import static androidx.core.app.NotificationCompat.PRIORITY_HIGH;
 
