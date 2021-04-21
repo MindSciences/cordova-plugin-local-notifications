@@ -54,6 +54,7 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 import de.appplant.cordova.plugin.notification.action.Action;
+import de.appplant.cordova.plugin.notification.util.TimeUtil;
 
 import static androidx.core.app.NotificationCompat.PRIORITY_HIGH;
 
