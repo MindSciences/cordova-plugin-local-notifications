@@ -113,10 +113,12 @@
 
             <receiver
                 android:name="de.appplant.cordova.plugin.localnotification.TriggerReceiver"
+		android:enabled="true"
                 android:exported="false" />
 
             <receiver
                 android:name="de.appplant.cordova.plugin.localnotification.ClearReceiver"
+		android:enabled="true"
                 android:exported="false" />
 
             <service
@@ -208,6 +210,11 @@
             src="src/android/notification/util/AssetUtil.java"
             target-dir="src/de/appplant/cordova/plugin/notification/util" />
 
+	<source-file
+            src="src/android/notification/util/TimeUtil.java"
+            target-dir="src/de/appplant/cordova/plugin/notification/util" />
+
+	    
         <source-file
             src="src/android/notification/Builder.java"
             target-dir="src/de/appplant/cordova/plugin/notification" />

@@ -29,6 +29,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.net.Uri;
+import android.os.Build;
 import android.service.notification.StatusBarNotification;
 import androidx.core.app.NotificationCompat;
 import androidx.collection.ArraySet;
@@ -53,6 +54,7 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 import de.appplant.cordova.plugin.notification.action.Action;
+import de.appplant.cordova.plugin.notification.util.TimeUtil;
 
 import static androidx.core.app.NotificationCompat.PRIORITY_HIGH;
 
@@ -68,7 +70,7 @@ public final class Notification {
         ALL, SCHEDULED, TRIGGERED
     }
 
-    // Extra key for the id
+  // Extra key for the id
     public static final String EXTRA_ID = "NOTIFICATION_ID";
 
     // Extra key for the update flag
@@ -80,7 +82,10 @@ public final class Notification {
     // Key for private preferences
     private static final String PREF_KEY_PID = "NOTIFICATION_PID";
 
-    // Cache for the builder instances
+    private static final int ALARM_REQUEST_CODE = 1532;
+
+
+  // Cache for the builder instances
     private static SparseArray<NotificationCompat.Builder> cache = null;
 
     // Application context passed by constructor
@@ -174,55 +179,8 @@ public final class Notification {
      * @param receiver Receiver to handle the trigger event.
      */
     void schedule(Request request, Class<?> receiver) {
-        List<Pair<Date, Data>> datas = new ArrayList<Pair<Date, Data>>();
-        Set<String> ids                  = new ArraySet<String>();
-        List <OneTimeWorkRequest> workRequests = new ArrayList<>();
-        do {
-            Date date = request.getTriggerDate();
-
-            if (date == null)
-                continue;
-
-            Intent intent = new Intent(context, receiver)
-                    .setAction(PREF_KEY_ID + request.getIdentifier())
-                    .putExtra(Notification.EXTRA_ID, options.getId())
-                    .putExtra(Request.EXTRA_OCCURRENCE, request.getOccurrence());
-
-            ids.add(intent.getAction());
-            Data data = new Data.Builder()
-                    .putInt(Notification.EXTRA_ID, options.getId())
-                    .putInt(Request.EXTRA_OCCURRENCE, request.getOccurrence())
-                    .build();
-
-            long time     = date.getTime();
-
-
-            if (!date.after(new Date()))
-                continue;
-
-            try {
-                long duration = time - System.currentTimeMillis();
-                Log.i("Notification", " date " + date + " action " + intent.getAction());
-                workRequests.add(createRequest(duration, data, intent.getAction()));
-            } catch (Exception ignore) {
-                ignore.printStackTrace();
-            }
-
-
-            datas.add(new Pair<>(date, data));
-
-        }
-        while (request.moveNext());
-
-        if (ids.isEmpty()) {
-            unpersist();
-            return;
-        }
-
-        WorkManager instance = WorkManager.getInstance(context);
-        instance.enqueue(workRequests);
-
-        persist(ids);
+      //scheduleWorker(request, receiver);
+      scheduleAlarmMan(request, receiver);
     }
 
     public OneTimeWorkRequest createRequest(long duration, Data data, String tag) {
@@ -239,6 +197,120 @@ public final class Notification {
         WorkManager instance = WorkManager.getInstance(context);
         instance.enqueue(notificationWork);
     }
+
+  /**
+   * Schedule the local notification using WorkManager.
+   */
+  void scheduleWorker(Request request, Class<?> receiver) {
+    List<Pair<Date, Data>> datas = new ArrayList<Pair<Date, Data>>();
+    Set<String> ids                  = new ArraySet<String>();
+    List <OneTimeWorkRequest> workRequests = new ArrayList<>();
+    do {
+      Date date = request.getTriggerDate();
+
+      if (date == null) continue;
+
+      Intent intent = new Intent(context, receiver)
+        .setAction(PREF_KEY_ID + request.getIdentifier())
+        .putExtra(Notification.EXTRA_ID, options.getId())
+        .putExtra(Request.EXTRA_OCCURRENCE, request.getOccurrence());
+
+      ids.add(intent.getAction());
+      Data data = new Data.Builder()
+        .putInt(Notification.EXTRA_ID, options.getId())
+        .putInt(Request.EXTRA_OCCURRENCE, request.getOccurrence())
+        .build();
+
+      long time     = date.getTime();
+
+
+      if (!date.after(new Date()))
+        continue;
+
+      try {
+        long duration = time - TimeUtil.getCurrentTimeMillis();
+        Log.i("Notification", " date " + date + " action " + intent.getAction());
+        workRequests.add(createRequest(duration, data, intent.getAction()));
+      } catch (Exception ignore) {
+        ignore.printStackTrace();
+      }
+
+
+      datas.add(new Pair<>(date, data));
+
+    }
+    while (request.moveNext());
+
+    if (ids.isEmpty()) {
+      unpersist();
+      return;
+    }
+
+    WorkManager instance = WorkManager.getInstance(context);
+    instance.enqueue(workRequests);
+
+    persist(ids);
+  }
+
+  /**
+   * Schedule the local notification using Alarm Manager.
+   */
+  public void scheduleAlarmMan(Request request, Class<?> receiver) {
+      Set<String> ids = new ArraySet<String>();
+      do {
+        Date date = request.getTriggerDate();
+
+        if (date == null)
+          continue;
+
+        // Intent gets called when the Notification gets fired
+        Intent intent = new Intent(context, receiver)
+          .setAction(PREF_KEY_ID + request.getIdentifier())
+          .putExtra(Notification.EXTRA_ID, options.getId())
+          .putExtra(Request.EXTRA_OCCURRENCE, request.getOccurrence());
+
+        ids.add(intent.getAction());
+
+        long time = date.getTime();
+
+        if (!date.after(new Date()))
+          continue;
+
+        PendingIntent pi = PendingIntent.getBroadcast(
+          context, ALARM_REQUEST_CODE, intent, PendingIntent.FLAG_CANCEL_CURRENT);
+
+        try {
+            setAlarm(time , pi);
+            Log.i("Notification", " date " + date + " action " + intent.getAction());
+          } catch (Exception ignore) {
+            ignore.printStackTrace();
+          }
+      }
+      while (request.moveNext());
+
+      if (ids.isEmpty()) {
+        unpersist();
+        return;
+      }
+
+      persist(ids);
+  }
+
+  /**
+   * Sets alarm for events using Alarm Manager, to wake up application
+   * and do planned actions even in sleep or low-power mode.
+   * Optimizations for Android M and above.
+   */
+  private void setAlarm(Long time , PendingIntent pi) {
+    int SDK_INT = Build.VERSION.SDK_INT;
+    if (SDK_INT < Build.VERSION_CODES.KITKAT)
+      getAlarmMgr().set(AlarmManager.RTC_WAKEUP, time, pi);
+    else if (Build.VERSION_CODES.KITKAT <= SDK_INT && SDK_INT < Build.VERSION_CODES.M)
+      getAlarmMgr().setExact(AlarmManager.RTC_WAKEUP, time, pi);
+    else if (SDK_INT >= Build.VERSION_CODES.M) {
+      getAlarmMgr().setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, time, pi);
+    }
+  }
 
     /**
      * Trigger local notification specified by options.
@@ -307,14 +379,14 @@ public final class Notification {
      * Present the local notification to user.
      */
     public void show() {
-        if (builder == null) return;
+      if (builder == null) return;
 
-        if (options.isWithProgressBar()) {
-            cacheBuilder();
-        }
+      if (options.isWithProgressBar()) {
+          cacheBuilder();
+      }
 
-        grantPermissionToPlaySoundFromExternal();
-        getNotMgr().notify(getId(), builder.build());
+      grantPermissionToPlaySoundFromExternal();
+      getNotMgr().notify(getId(), builder.build());
     }
 
     /**
@@ -467,9 +539,8 @@ public final class Notification {
     /**
      * Notification manager for the application.
      */
-    private NotificationManager getNotMgr () {
-        return (NotificationManager) context
-                .getSystemService(Context.NOTIFICATION_SERVICE);
+    private NotificationManager getNotMgr() {
+      return (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
     }
 
     /**
