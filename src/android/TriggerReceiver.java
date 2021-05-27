@@ -21,9 +21,11 @@
 
 package de.appplant.cordova.plugin.localnotification;
 
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.os.Bundle;
 import android.os.PowerManager;
+import android.util.Log;
 
 import java.util.Calendar;
 
@@ -47,7 +49,11 @@ import static java.util.Calendar.MINUTE;
  * Android notification bar. The notification uses the default notification
  * sound and it vibrates the phone.
  */
+
+
 public class TriggerReceiver extends AbstractTriggerReceiver {
+
+  public static final String WAKE_LOCK_TAG = "LocalNotification";
 
     /**
      * Called when a local notification was triggered. Does present the local
@@ -59,7 +65,7 @@ public class TriggerReceiver extends AbstractTriggerReceiver {
     @Override
     public void onTrigger (Notification notification, Bundle bundle) {
         boolean isUpdate = bundle.getBoolean(Notification.EXTRA_UPDATE, false);
-        Context context  = notification.getContext();
+      	Context context  = notification.getContext();
         Options options  = notification.getOptions();
         Manager manager  = Manager.getInstance(context);
         int badge        = options.getBadgeNumber();
@@ -72,11 +78,11 @@ public class TriggerReceiver extends AbstractTriggerReceiver {
             wakeUp(context);
         }
 
-        notification.show();
-
         if (!isUpdate && isAppRunning()) {
             fireEvent("trigger", notification);
         }
+
+        notification.show();
 
         if (!options.isInfiniteTrigger())
             return;
@@ -93,8 +99,9 @@ public class TriggerReceiver extends AbstractTriggerReceiver {
      *
      * @param context The application context.
      */
+    @SuppressLint("InvalidWakeLockTag")
     private void wakeUp (Context context) {
-        PowerManager pm = (PowerManager) context.getSystemService(POWER_SERVICE);
+      	PowerManager pm = (PowerManager) context.getSystemService(POWER_SERVICE);
 
         if (pm == null)
             return;
@@ -102,8 +109,7 @@ public class TriggerReceiver extends AbstractTriggerReceiver {
         int level =   PowerManager.SCREEN_DIM_WAKE_LOCK
                     | PowerManager.ACQUIRE_CAUSES_WAKEUP;
 
-        PowerManager.WakeLock wakeLock = pm.newWakeLock(
-                level, "LocalNotification");
+         PowerManager.WakeLock wakeLock = pm.newWakeLock(level, WAKE_LOCK_TAG);
 
         wakeLock.setReferenceCounted(false);
         wakeLock.acquire(1000);

@@ -29,10 +29,17 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.net.Uri;
+import android.os.Build;
 import android.service.notification.StatusBarNotification;
-import android.support.v4.app.NotificationCompat;
-import android.support.v4.util.ArraySet;
-import android.support.v4.util.Pair;
+import androidx.core.app.NotificationCompat;
+import androidx.collection.ArraySet;
+import androidx.core.util.Pair;
+import androidx.work.Constraints;
+import androidx.work.Data;
+import androidx.work.OneTimeWorkRequest;
+import androidx.work.Operation;
+import androidx.work.WorkManager;
+
 import android.util.Log;
 import android.util.SparseArray;
 
@@ -44,15 +51,13 @@ import java.util.Date;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
-import static android.app.AlarmManager.RTC;
-import static android.app.AlarmManager.RTC_WAKEUP;
-import static android.app.PendingIntent.FLAG_CANCEL_CURRENT;
-import static android.os.Build.VERSION.SDK_INT;
-import static android.os.Build.VERSION_CODES.M;
-import static android.support.v4.app.NotificationCompat.PRIORITY_HIGH;
-import static android.support.v4.app.NotificationCompat.PRIORITY_MAX;
-import static android.support.v4.app.NotificationCompat.PRIORITY_MIN;
+import de.appplant.cordova.plugin.notification.action.Action;
+import de.appplant.cordova.plugin.notification.util.TimeUtil;
+
+import static androidx.core.app.NotificationCompat.PRIORITY_HIGH;
+
 
 /**
  * Wrapper class around OS notification class. Handles basic operations
@@ -65,7 +70,7 @@ public final class Notification {
         ALL, SCHEDULED, TRIGGERED
     }
 
-    // Extra key for the id
+  // Extra key for the id
     public static final String EXTRA_ID = "NOTIFICATION_ID";
 
     // Extra key for the update flag
@@ -77,7 +82,10 @@ public final class Notification {
     // Key for private preferences
     private static final String PREF_KEY_PID = "NOTIFICATION_PID";
 
-    // Cache for the builder instances
+    private static final int ALARM_REQUEST_CODE = 1532;
+
+
+  // Cache for the builder instances
     private static SparseArray<NotificationCompat.Builder> cache = null;
 
     // Application context passed by constructor
@@ -117,34 +125,32 @@ public final class Notification {
     /**
      * Get application context.
      */
-    public Context getContext() {
+    public Context getContext () {
         return context;
     }
 
     /**
      * Get notification options.
      */
-    public Options getOptions() {
+    public Options getOptions () {
         return options;
     }
 
     /**
      * Get notification ID.
      */
-    public int getId() {
+    public int getId () {
         return options.getId();
     }
 
     /**
      * If it's a repeating notification.
      */
-    public boolean isRepeating() {
+    public boolean isRepeating () {
         return getOptions().getTrigger().has("every");
     }
 
-    /**
-     * If the notifications priority is high or above.
-     */
+
     public boolean isHighPrio() {
         return getOptions().getPrio() >= PRIORITY_HIGH;
     }
@@ -173,75 +179,138 @@ public final class Notification {
      * @param receiver Receiver to handle the trigger event.
      */
     void schedule(Request request, Class<?> receiver) {
-        List<Pair<Date, Intent>> intents = new ArrayList<Pair<Date, Intent>>();
-        Set<String> ids                  = new ArraySet<String>();
-        AlarmManager mgr                 = getAlarmMgr();
-
-        cancelScheduledAlarms();
-
-        do {
-            Date date = request.getTriggerDate();
-
-            Log.d("local-notification", "Next trigger at: " + date);
-
-            if (date == null)
-                continue;
-
-            Intent intent = new Intent(context, receiver)
-                    .setAction(PREF_KEY_ID + request.getIdentifier())
-                    .putExtra(Notification.EXTRA_ID, options.getId())
-                    .putExtra(Request.EXTRA_OCCURRENCE, request.getOccurrence());
-
-            ids.add(intent.getAction());
-            intents.add(new Pair<Date, Intent>(date, intent));
-        }
-        while (request.moveNext());
-
-        if (intents.isEmpty()) {
-            unpersist();
-            return;
-        }
-
-        persist(ids);
-
-        if (!options.isInfiniteTrigger()) {
-            Intent last = intents.get(intents.size() - 1).second;
-            last.putExtra(Request.EXTRA_LAST, true);
-        }
-
-        for (Pair<Date, Intent> pair : intents) {
-            Date date     = pair.first;
-            long time     = date.getTime();
-            Intent intent = pair.second;
-
-            if (!date.after(new Date()) && trigger(intent, receiver))
-                continue;
-
-            PendingIntent pi = PendingIntent.getBroadcast(
-                    context, 0, intent, FLAG_CANCEL_CURRENT);
-
-            try {
-                switch (options.getPrio()) {
-                    case PRIORITY_MIN:
-                        mgr.setExact(RTC, time, pi);
-                        break;
-                    case PRIORITY_MAX:
-                        if (SDK_INT >= M) {
-                            mgr.setExactAndAllowWhileIdle(RTC_WAKEUP, time, pi);
-                        } else {
-                            mgr.setExact(RTC, time, pi);
-                        }
-                        break;
-                    default:
-                        mgr.setExact(RTC_WAKEUP, time, pi);
-                        break;
-                }
-            } catch (Exception ignore) {
-                // Samsung devices have a known bug where a 500 alarms limit
-                // can crash the app
-            }
-        }
+      //scheduleWorker(request, receiver);
+      scheduleAlarmMan(request, receiver);
     }
+
+    public OneTimeWorkRequest createRequest(long duration, Data data, String tag) {
+        return new OneTimeWorkRequest.Builder(NotificationWorker.class)
+                .setInitialDelay(duration, TimeUnit.MILLISECONDS).addTag(tag)
+                .setInputData(data).build();
+    }
+
+    public void scheduleReminder(long duration, Data data, String tag) {
+        OneTimeWorkRequest notificationWork = new OneTimeWorkRequest.Builder(NotificationWorker.class)
+                .setInitialDelay(duration, TimeUnit.MILLISECONDS).addTag(tag)
+                .setInputData(data).build();
+
+        WorkManager instance = WorkManager.getInstance(context);
+        instance.enqueue(notificationWork);
+    }
+
+  /**
+   * Schedule the local notification using WorkManager.
+   */
+  void scheduleWorker(Request request, Class<?> receiver) {
+    List<Pair<Date, Data>> datas = new ArrayList<Pair<Date, Data>>();
+    Set<String> ids                  = new ArraySet<String>();
+    List <OneTimeWorkRequest> workRequests = new ArrayList<>();
+    do {
+      Date date = request.getTriggerDate();
+
+      if (date == null) continue;
+
+      Intent intent = new Intent(context, receiver)
+        .setAction(PREF_KEY_ID + request.getIdentifier())
+        .putExtra(Notification.EXTRA_ID, options.getId())
+        .putExtra(Request.EXTRA_OCCURRENCE, request.getOccurrence());
+
+      ids.add(intent.getAction());
+      Data data = new Data.Builder()
+        .putInt(Notification.EXTRA_ID, options.getId())
+        .putInt(Request.EXTRA_OCCURRENCE, request.getOccurrence())
+        .build();
+
+      long time     = date.getTime();
+
+
+      if (!date.after(new Date()))
+        continue;
+
+      try {
+        long duration = time - TimeUtil.getCurrentTimeMillis();
+        Log.i("Notification", " date " + date + " action " + intent.getAction());
+        workRequests.add(createRequest(duration, data, intent.getAction()));
+      } catch (Exception ignore) {
+        ignore.printStackTrace();
+      }
+
+
+      datas.add(new Pair<>(date, data));
+
+    }
+    while (request.moveNext());
+
+    if (ids.isEmpty()) {
+      unpersist();
+      return;
+    }
+
+    WorkManager instance = WorkManager.getInstance(context);
+    instance.enqueue(workRequests);
+
+    persist(ids);
+  }
+
+  /**
+   * Schedule the local notification using Alarm Manager.
+   */
+  public void scheduleAlarmMan(Request request, Class<?> receiver) {
+      Set<String> ids = new ArraySet<String>();
+      do {
+        Date date = request.getTriggerDate();
+
+        if (date == null)
+          continue;
+
+        // Intent gets called when the Notification gets fired
+        Intent intent = new Intent(context, receiver)
+          .setAction(PREF_KEY_ID + request.getIdentifier())
+          .putExtra(Notification.EXTRA_ID, options.getId())
+          .putExtra(Request.EXTRA_OCCURRENCE, request.getOccurrence());
+
+        ids.add(intent.getAction());
+
+        long time = date.getTime();
+
+        if (!date.after(new Date()))
+          continue;
+
+        PendingIntent pi = PendingIntent.getBroadcast(
+          context, ALARM_REQUEST_CODE, intent, PendingIntent.FLAG_CANCEL_CURRENT);
+
+        try {
+            setAlarm(time , pi);
+            Log.i("Notification", " date " + date + " action " + intent.getAction());
+          } catch (Exception ignore) {
+            ignore.printStackTrace();
+          }
+      }
+      while (request.moveNext());
+
+      if (ids.isEmpty()) {
+        unpersist();
+        return;
+      }
+
+      persist(ids);
+  }
+
+  /**
+   * Sets alarm for events using Alarm Manager, to wake up application
+   * and do planned actions even in sleep or low-power mode.
+   * Optimizations for Android M and above.
+   */
+  private void setAlarm(Long time , PendingIntent pi) {
+    int SDK_INT = Build.VERSION.SDK_INT;
+    if (SDK_INT < Build.VERSION_CODES.KITKAT)
+      getAlarmMgr().set(AlarmManager.RTC_WAKEUP, time, pi);
+    else if (Build.VERSION_CODES.KITKAT <= SDK_INT && SDK_INT < Build.VERSION_CODES.M)
+      getAlarmMgr().setExact(AlarmManager.RTC_WAKEUP, time, pi);
+    else if (SDK_INT >= Build.VERSION_CODES.M) {
+      getAlarmMgr().setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, time, pi);
+    }
+  }
 
     /**
      * Trigger local notification specified by options.
@@ -302,14 +371,7 @@ public final class Notification {
             return;
 
         for (String action : actions) {
-            Intent intent = new Intent(action);
-
-            PendingIntent pi = PendingIntent.getBroadcast(
-                    context, 0, intent, 0);
-
-            if (pi != null) {
-                getAlarmMgr().cancel(pi);
-            }
+            WorkManager.getInstance(context).cancelAllWorkByTag(action);
         }
     }
 
@@ -317,14 +379,14 @@ public final class Notification {
      * Present the local notification to user.
      */
     public void show() {
-        if (builder == null) return;
+      if (builder == null) return;
 
-        if (options.showChronometer()) {
-            cacheBuilder();
-        }
+      if (options.isWithProgressBar()) {
+          cacheBuilder();
+      }
 
-        grantPermissionToPlaySoundFromExternal();
-        getNotMgr().notify(getId(), builder.build());
+      grantPermissionToPlaySoundFromExternal();
+      getNotMgr().notify(getId(), builder.build());
     }
 
     /**
@@ -438,7 +500,7 @@ public final class Notification {
     /**
      * Caches the builder instance so it can be used later.
      */
-    private void cacheBuilder() {
+    private void cacheBuilder () {
 
         if (cache == null) {
             cache = new SparseArray<NotificationCompat.Builder>();
@@ -477,9 +539,8 @@ public final class Notification {
     /**
      * Notification manager for the application.
      */
-    private NotificationManager getNotMgr () {
-        return (NotificationManager) context
-                .getSystemService(Context.NOTIFICATION_SERVICE);
+    private NotificationManager getNotMgr() {
+      return (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
     }
 
     /**
